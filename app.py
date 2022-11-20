@@ -15,10 +15,17 @@ from flask_caching import Cache
 
 import numpy as np
 
+import pandas as pd
+from pandas.core.frame import DataFrame
 import plotly.express as px
 import plotly.graph_objs as go
+import plotly.figure_factory as ff
+
+import types
 
 import vaex
+import numpy as np
+
 
 
 logging.basicConfig(level=logging.DEBUG)
@@ -31,7 +38,7 @@ cache = Cache(app.server, config={
     'CACHE_TYPE': 'filesystem',
     'CACHE_DIR': 'cache-directory'
 })
-# set negative to disable (useful for testing/benchmarking)
+# set negative to disable(useful for testing/benchmarking)
 CACHE_TIMEOUT = int(os.environ.get('DASH_CACHE_TIMEOUT', '60'))
 
 # Get auxiliary information about zones, boroughs, and their relations
@@ -55,9 +62,11 @@ zone_index_to_borough_index = {int(index): borough_name_to_index[zbmapper[name]]
 
 # Open the main data
 taxi_path = 's3://vaex/taxi/yellow_taxi_2012_zones.hdf5?anon=true'
-# override the path, e.g. $ export TAXI_PATH=/data/taxi/yellow_taxi_2012_zones.hdf5
+# override the path, e.g.$ export TAXI_PATH=/data/taxi/yellow_taxi_2012_zones.hdf5
 taxi_path = os.environ.get('TAXI_PATH', taxi_path)
+hdf_path = "/opt/lixile/bit.hdf5"
 df_original = vaex.open(taxi_path)
+bolt_df = vaex.open(hdf_path)
 
 # Make sure the data is cached locally
 used_columns = ['pickup_longitude',
@@ -149,7 +158,7 @@ def data_bars(df, column):
             'if': {
                 'filter_query': (
                     '{{{column}}} >= {min_bound}' +
-                    (' && {{{column}}} < {max_bound}' if (i < len(bounds) - 1) else '')
+                    (' && {{{column}}} < {max_bound}' if(i < len(bounds) - 1) else '')
                 ).format(column=column, min_bound=min_bound, max_bound=max_bound),
                 'column_id': column
             },
@@ -203,15 +212,14 @@ def create_figure_histogram(x, counts, title=None, xlabel=None, ylabel=None):
                        yaxis=go.layout.YAxis(title=ylabel),
                        **fig_layout_defaults)
 
-    # Now calculate the most likely value (peak of the histogram)
+    # Now calculate the most likely value(peak of the histogram)
     peak = np.round(x[np.argmax(counts)], 2)
+    plot_figone = bolt_df["gb_em_ratio"].viz.ph_histogram(bolt_df, what="count(*)", f='log10', figsize=(12,15), info={}, shape=100)
 
-    return go.Figure(data=traces, layout=layout), peak
+    return plot_figone, peak
 
 
 def create_figure_heatmap(data_array, heatmap_limits, trip_start, trip_end):
-    logger.info("Figure: update heatmap heatmap_limits=%r", heatmap_limits)
-
     # Set up the layout of the figure
     legend = go.layout.Legend(orientation='h',
                               x=0.0,
@@ -320,6 +328,14 @@ def create_figure_geomap(pickup_counts, zone, zoom=10, center={"lat": 40.7, "lon
     fig.data[1]['hovertemplate'] = hovertemplate
 
     fig.update_layout(margin={"r": 0, "t": 0, "l": 0, "b": 0}, coloraxis_showscale=False, showlegend=False)
+    # scatter 
+    tmp_df = bolt_df.to_pandas_df()
+    fig = go.Figure(data=go.Scattergl(
+                    x = tmp_df.em_ratio_error ,
+                    y = tmp_df.gb_em_ratio ,
+                    mode='markers'
+                    )
+        )
     return fig
 
 
@@ -378,7 +394,32 @@ def create_figure_sunburst(df_outflow_top, df_outflow_rest, df_outflow_borough, 
         # branchvalues="total"
         ))
     fig_sunburst.layout = go.Layout(**fig_layout_defaults)
-    return fig_sunburst
+    tmp_df = bolt_df.to_pandas_df()
+    fig_hist = px.histogram(tmp_df, 
+                        x = "em_ratio_error",
+                        title = "Histogram of gb_em_ratio",
+                        labels = {"gb_em_ratio" : "gb_em_ratio"},
+                        opacity = 0.8,
+                        nbins = 20, # 用于设置分箱，即柱状图数目。
+                        # text_auto = True, # plotly 4.14 不支持，需要更新plotly后才可开启。
+                        log_y = True
+                        )                                      
+    heights, bins = np.histogram(tmp_df.em_ratio_error, bins = 20)
+    h_xbins = fig_hist.full_figure_for_development().data[0].xbins
+    percent_x_start = (h_xbins.start + h_xbins.size/2)
+    percent_x = [percent_x_start+i*h_xbins.size  for i in range(len(heights)) ]
+    percent = [i/sum(heights)*100 for i in heights]
+    percent_dict = { "x" : percent_x, "y" : percent}
+    df_percent = DataFrame(percent_dict)
+    fig_hist.add_traces(list(px.line(df_percent,x='x', y='y').update_traces(mode='lines+markers', line={"dash": "dash", "color":"firebrick"}, yaxis="y3", name="percent").select_traces())).update_layout(yaxis3={"overlaying": "y", "side": "right"}, showlegend=False)
+    # logger.info(f"Figure: heights {heights}")
+    # logger.info(f"Figure: percent_x {percent_x}")
+    # logger.info(f"Figure: h_xbins {h_xbins}")
+    # logger.info(f"Figure: fig_hist {fig_hist}")
+    # logger.info(f"Figure: percent {percent}")
+
+    
+    return fig_hist
 
 
 def create_table_data(df_outflow_top):
@@ -412,7 +453,7 @@ def create_selection(days, hours):
         if hour_max < 23:
             df.select((df.pickup_hour <= hour_max), mode='and')
             selection = True
-    if (len(days) > 0) & (len(days) < 7):
+    if(len(days) > 0) & (len(days) < 7):
         df.select(df.pickup_day.isin(days), mode='and')
         selection = True
     return df, selection
@@ -582,7 +623,119 @@ app.layout = html.Div(className='app-body', children=[
             ]),
         ]),
     ]),
-    # Control panel
+    # Control panel one
+    html.Div(className="row", id='control-panel1', children=[
+        html.Div(className="four columns pretty_container", children=[
+            html.Label('Select Product Line Name'),
+            dcc.Dropdown(id='Product Name',
+                         placeholder='Select product line',
+                         options=[{'label': 'GloryEX', 'value': "GloryEX"},
+                                  {'label': 'GloryBolt', 'value': 'GloryBolt'},
+                                  {'label': 'GloryTime', 'value': 'GloryTime'},
+                                  {'label': 'PhyBolt', 'value': 'PhyBolt'},
+                                  {'label': 'GloryDB', 'value': 'GloryDB'},],
+                         value=[],
+                        #  multi=True
+                         ),
+        ]),
+        html.Div(className="four columns pretty_container", children=[
+            html.Label('Select product type'),
+            dcc.Dropdown(id='Type',
+                         placeholder='Select a column of data for Y-axis',
+                         options=[{'label': 'Release', 'value': 'Release'},
+                                  {'label': 'Personal', 'value': 'Personal'},],
+                         value=[],
+                        #  multi=True
+                         ),
+        ]),
+        html.Div(className="four columns pretty_container", children=[
+            html.Label('Select build number'),
+            dcc.Dropdown(id='Number',
+                         placeholder='Select a column of data for Y-axis',
+                         options=[{'label': '1', 'value': 1},
+                                  {'label': '101', 'value': 101},
+                                  {'label': '102', 'value': 102},
+                                  {'label': '103', 'value': 103},
+                                  {'label': '104', 'value': 104},
+                                  {'label': '105', 'value': 105},
+                                  {'label': '6', 'value': 6}],
+                         value=[],
+                        #  multi=True
+                         ),
+        ]),
+    ]),
+    # Control panel two
+    html.Div(className="row", id='control-panel2', children=[
+        html.Div(className="one-four columns pretty_container", children=[
+            html.Label('Select Flow Name'),
+            dcc.Dropdown(id='Flow Name',
+                         placeholder='Select product line',
+                         options=[{'label': 'dynamicVetor', 'value': "dynamicVetor"},
+                                  {'label': 'staticVetor', 'value': 'staticVetor'},
+                                  {'label': 'gridCheck', 'value': 'gridCheck'},
+                                  {'label': 'pgEM', 'value': 'pgEM'},
+                                  {'label': 'signalEM', 'value': 'signalEM'},],
+                         value=[],
+                        #  multi=True 用于开启混合选项
+                         ),
+        ]),
+        html.Div(className="one-four columns pretty_container", children=[
+            html.Label('Select Process'),
+            dcc.Dropdown(id='Process',
+                         placeholder='Select Process',
+                         options=[{'label': 'TSMC28', 'value': 'TSMC28'},
+                                  {'label': 'SMIC12', 'value': 'SMIC12'},],
+                         value=[],
+                        #  multi=True
+                         ),
+        ]),
+        html.Div(className="one-four columns pretty_container", children=[
+            html.Label('Select Case Name'),
+            dcc.Dropdown(id='Case Name',
+                         placeholder='Select Case Name',
+                         options=[{'label': 'viaModel', 'value': 'viaModel'},
+                                  {'label': 'polygon_R', 'value': 'polygon_R'},],
+                         value=[],
+                        #  multi=True
+                         ),
+        ]),
+        html.Div(className="one-four columns pretty_container", children=[
+            html.Label('Select Result Name'),
+            dcc.Dropdown(id='Result Name',
+                         placeholder='Select Result Name',
+                         options=[{'label': 'vdd', 'value': 'vdd'},
+                                  {'label': 'error', 'value': 'error'},],
+                         value=[],
+                        #  multi=True
+                         ),
+        ]),
+    ]),
+    # Control panel one
+    html.Div(className="row", id='control-panel3', children=[
+        html.Div(className="one-half columns pretty_container", children=[
+            html.Label('Select X-axis'),
+            dcc.Dropdown(id='X-axis',
+                         placeholder='Select a column of data for X-axis',
+                         options=[{'label': '123', 'value': "123"},
+                                  {'label': '456', 'value': '456'},
+                                  {'label': '789', 'value': '789'},
+                                  {'label': '321', 'value': '321'},],
+                         value=[],
+                        #  multi=True
+                         ),
+        ]),
+        html.Div(className="one-half columns pretty_container", children=[
+            html.Label('Select Y-axis'),
+            dcc.Dropdown(id='Y-axis',
+                         placeholder='Select a column of data for Y-axis',
+                         options=[{'label': 'xxx', 'value': 'xxx'},
+                                  {'label': 'xxxx', 'value': 'xxxx'},],
+                         value=[],
+                        #  multi=True
+                         ),
+        ]),
+    ]),
+    # Control panel two
     html.Div(className="row", id='control-panel', children=[
         html.Div(className="four columns pretty_container", children=[
             dcc.Loading(
@@ -609,13 +762,13 @@ app.layout = html.Div(className='app-body', children=[
             html.Label('Select pick-up days'),
             dcc.Dropdown(id='days',
                          placeholder='Select a day of week',
-                         options=[{'label': 'Monday', 'value': 0},
-                                  {'label': 'Tuesday', 'value': 1},
-                                  {'label': 'Wednesday', 'value': 2},
-                                  {'label': 'Thursday', 'value': 3},
-                                  {'label': 'Friday', 'value': 4},
-                                  {'label': 'Saturday', 'value': 5},
-                                  {'label': 'Sunday', 'value': 6}],
+                         options=[{'label': 'Monday', 'value': 'Monday'},
+                                  {'label': 'Tuesday', 'value': 'Tuesday'},
+                                  {'label': 'Wednesday', 'value': 'Wednesday'},
+                                  {'label': 'Thursday', 'value': 'Thursday'},
+                                  {'label': 'Friday', 'value': 'Friday'},
+                                  {'label': 'Saturday', 'value': 'Saturday'},
+                                  {'label': 'Sunday', 'value': 'Sunday'}],
                          value=[],
                          multi=True),
         ]),
@@ -897,4 +1050,4 @@ def trip_details_summary(days, hours, trip_start, trip_end):
 
 
 if __name__ == '__main__':
-    app.run_server(debug=True)
+    app.run_server(host="0.0.0.0", debug=True)
