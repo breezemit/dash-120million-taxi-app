@@ -66,7 +66,8 @@ taxi_path = 's3://vaex/taxi/yellow_taxi_2012_zones.hdf5?anon=true'
 taxi_path = os.environ.get('TAXI_PATH', taxi_path)
 hdf_path = "/opt/lixile/bit.hdf5"
 df_original = vaex.open(taxi_path)
-bolt_df = vaex.open(hdf_path)
+original_df = vaex.open(hdf_path).to_pandas_df()
+
 
 # Make sure the data is cached locally
 used_columns = ['pickup_longitude',
@@ -271,7 +272,12 @@ def create_figure_heatmap(data_array, heatmap_limits, trip_start, trip_end):
     return fig
 
 
-def create_figure_geomap(pickup_counts, zone, zoom=10, center={"lat": 40.7, "lon": -73.99}):
+def create_figure_geomap(pickup_counts, zone, original_df, xname, yname, zoom=10, center={"lat": 40.7, "lon": -73.99}):
+    if original_df is None or xname is None or yname is None:
+        logger.info('Figure: original_df or xname or yname is empty')
+        df = px.data.stocks()
+        fig_empty = px.line(df, x='GOOG', y="GOOG")
+        return fig_empty
     geomap_data = {
         'count': pickup_counts,
         'log_count': np.log10(pickup_counts),
@@ -329,10 +335,9 @@ def create_figure_geomap(pickup_counts, zone, zoom=10, center={"lat": 40.7, "lon
 
     fig.update_layout(margin={"r": 0, "t": 0, "l": 0, "b": 0}, coloraxis_showscale=False, showlegend=False)
     # scatter 
-    tmp_df = bolt_df.to_pandas_df()
     fig = go.Figure(data=go.Scattergl(
-                    x = tmp_df.em_ratio_error ,
-                    y = tmp_df.gb_em_ratio ,
+                    x = original_df[xname] ,
+                    y = original_df[yname] ,
                     mode='markers'
                     )
         )
@@ -373,7 +378,20 @@ def create_figure_sankey(df_outflow_top, df_outflow_rest, df_outflow_borough, pi
     return fig_sankey
 
 
-def create_figure_sunburst(df_outflow_top, df_outflow_rest, df_outflow_borough, pickup_zone):
+def create_figure_sunburst(df_outflow_top, df_outflow_rest, df_outflow_borough, pickup_zone, source_df, xname):
+    if original_df is None or xname is None:
+        logger.info('Figure: original_df or xname  is empty')
+        df = px.data.tips()
+        fig_empty = px.histogram(df, 
+                        x = "total_bill",
+                        title = f"Histogram of demo",
+                        labels = {"demo": "demo"},
+                        opacity = 0.8,
+                        nbins = 20, # 用于设置分箱，即柱状图数目。
+                        # text_auto = True, # plotly 4.14 不支持，需要更新plotly后才可开启。
+                        log_y = True
+                        ) 
+        return fig_empty
     for df in [df_outflow_borough, df_outflow_top]:
         df['dropoff_borough_name'] = df.dropoff_borough.astype('int').map(borough_index_to_name)
     for df in [df_outflow_top]:
@@ -394,26 +412,32 @@ def create_figure_sunburst(df_outflow_top, df_outflow_rest, df_outflow_borough, 
         # branchvalues="total"
         ))
     fig_sunburst.layout = go.Layout(**fig_layout_defaults)
-    tmp_df = bolt_df.to_pandas_df()
-    fig_hist = px.histogram(tmp_df, 
-                        x = "em_ratio_error",
-                        title = "Histogram of gb_em_ratio",
-                        labels = {"gb_em_ratio" : "gb_em_ratio"},
+    fig_hist = px.histogram(source_df, 
+                        x = xname,
+                        title = f"Histogram of {xname}",
+                        labels = {xname: xname},
                         opacity = 0.8,
                         nbins = 20, # 用于设置分箱，即柱状图数目。
                         # text_auto = True, # plotly 4.14 不支持，需要更新plotly后才可开启。
                         log_y = True
-                        )                                      
-    heights, bins = np.histogram(tmp_df.em_ratio_error, bins = 20)
-    h_xbins = fig_hist.full_figure_for_development().data[0].xbins
+                        )                               
+    
+    h_xbins = fig_hist.full_figure_for_development().data[0].xbins  
+    x_bins_num = round((h_xbins.end - h_xbins.start) / h_xbins.size) + 1
+    x_bins = [h_xbins.start + i*h_xbins.size  for i in range(x_bins_num) ]
+    segments = pd.cut(source_df[xname], x_bins, right=False)
+    count = pd.value_counts(segments, sort=False)
+    # heights, bins = np.histogram(source_df[xname], bins = x_bins_num )
     percent_x_start = (h_xbins.start + h_xbins.size/2)
-    percent_x = [percent_x_start+i*h_xbins.size  for i in range(len(heights)) ]
+    percent_x = [percent_x_start+i*h_xbins.size  for i in range(x_bins_num - 1) ]
+    heights = count.tolist()
     percent = [i/sum(heights)*100 for i in heights]
-    percent_dict = { "x" : percent_x, "y" : percent}
+    percent_dict = { "x" : percent_x, "percent" : percent}
     df_percent = DataFrame(percent_dict)
-    fig_hist.add_traces(list(px.line(df_percent,x='x', y='y').update_traces(mode='lines+markers', line={"dash": "dash", "color":"firebrick"}, yaxis="y3", name="percent").select_traces())).update_layout(yaxis3={"overlaying": "y", "side": "right"}, showlegend=False)
+    fig_hist.add_traces(list(px.line(df_percent,x='x', y='percent').update_traces(mode='lines+markers', line={"dash": "dash", "color":"firebrick"}, yaxis="y3", name="percent").select_traces())).update_layout(yaxis3={"overlaying": "y", "side": "right"}, showlegend=False)
+    
     # logger.info(f"Figure: heights {heights}")
-    # logger.info(f"Figure: percent_x {percent_x}")
+    # logger.info(f"Figure: bins {bins}")
     # logger.info(f"Figure: h_xbins {h_xbins}")
     # logger.info(f"Figure: fig_hist {fig_hist}")
     # logger.info(f"Figure: percent {percent}")
@@ -578,7 +602,7 @@ df_outflow_rest_initial = vaex.from_dict(flow_data_initial['outflow_rest'])
 df_outflow_borough_initial = vaex.from_dict(flow_data_initial['outflow_borough'])
 
 figure_sankey_initial = create_figure_sankey(df_outflow_top_initial, df_outflow_rest_initial, df_outflow_borough_initial, zone_initial)
-figure_sunburst_initial = create_figure_sunburst(df_outflow_top_initial, df_outflow_rest_initial, df_outflow_borough_initial, zone_initial)
+figure_sunburst_initial = create_figure_sunburst(df_outflow_top_initial, df_outflow_rest_initial, df_outflow_borough_initial, zone_initial, original_df, None)
 
 table_records_intitial, table_style_initial = create_table_data(df_outflow_top_initial)
 
@@ -713,23 +737,39 @@ app.layout = html.Div(className='app-body', children=[
     # Control panel one
     html.Div(className="row", id='control-panel3', children=[
         html.Div(className="one-half columns pretty_container", children=[
-            html.Label('Select X-axis'),
-            dcc.Dropdown(id='X-axis',
+            html.Label('Select X axis'),
+            dcc.Dropdown(id='Xaxis',
                          placeholder='Select a column of data for X-axis',
-                         options=[{'label': '123', 'value': "123"},
-                                  {'label': '456', 'value': '456'},
-                                  {'label': '789', 'value': '789'},
-                                  {'label': '321', 'value': '321'},],
+                         options=[{'label': 'gb_em_ratio', 'value': "gb_em_ratio"},
+                                  {'label': 'rh_em_ratio', 'value': 'rh_em_ratio'},
+                                  {'label': 'em_ratio_error', 'value': 'em_ratio_error'},
+                                  {'label': 'gb_current', 'value': 'gb_current'},
+                                  {'label': 'rh_current', 'value': 'rh_current'},
+                                  {'label': 'current_error', 'value': 'current_error'},
+                                  {'label': 'gb_cur_limit', 'value': 'gb_cur_limit'},
+                                  {'label': 'rh_cur_limit', 'value': 'rh_cur_limit'},
+                                  {'label': 'cur_limit_error', 'value': 'cur_limit_error'},
+                                  {'label': 'gb_lines', 'value': 'gb_lines'},
+                                  {'label': 'rh_lines', 'value': 'rh_lines'},],
                          value=[],
                         #  multi=True
                          ),
         ]),
         html.Div(className="one-half columns pretty_container", children=[
-            html.Label('Select Y-axis'),
-            dcc.Dropdown(id='Y-axis',
+            html.Label('Select Y axis'),
+            dcc.Dropdown(id='Yaxis',
                          placeholder='Select a column of data for Y-axis',
-                         options=[{'label': 'xxx', 'value': 'xxx'},
-                                  {'label': 'xxxx', 'value': 'xxxx'},],
+                         options=[{'label': 'gb_em_ratio', 'value': "gb_em_ratio"},
+                                  {'label': 'rh_em_ratio', 'value': 'rh_em_ratio'},
+                                  {'label': 'em_ratio_error', 'value': 'em_ratio_error'},
+                                  {'label': 'gb_current', 'value': 'gb_current'},
+                                  {'label': 'rh_current', 'value': 'rh_current'},
+                                  {'label': 'current_error', 'value': 'current_error'},
+                                  {'label': 'gb_cur_limit', 'value': 'gb_cur_limit'},
+                                  {'label': 'rh_cur_limit', 'value': 'rh_cur_limit'},
+                                  {'label': 'cur_limit_error', 'value': 'cur_limit_error'},
+                                  {'label': 'gb_lines', 'value': 'gb_lines'},
+                                  {'label': 'rh_lines', 'value': 'rh_lines'},],
                          value=[],
                         #  multi=True
                          ),
@@ -781,7 +821,7 @@ app.layout = html.Div(className='app-body', children=[
                 html.Div(className="eight columns pretty_container", children=[
                     dcc.Markdown(id='zone_summary', children=zone_summary_md),
                     dcc.Graph(id='geomap_figure',
-                              figure=create_figure_geomap(geomap_data_initial, zone_initial),
+                              figure=create_figure_geomap(geomap_data_initial, zone_initial, None, None, None ),
                               config={"modeBarButtonsToRemove": ['lasso2d', 'select2d']})
                 ]),
                 html.Div(className="four columns pretty_container", children=[
@@ -943,7 +983,8 @@ def click_action(click_data_geomap, click_data_sunburst, click_data_sunkey, clic
 
 
 # Geographical map data
-@app.callback([Output('geomap_figure', 'figure'),
+@app.callback([
+               # Output('geomap_figure', 'figure'),
                Output('data_summary_filtered', 'children'),
                Output('zone_summary', 'children'),
                Output('selected_progress', 'value'),
@@ -960,7 +1001,7 @@ def update_geomap_figure(days, hours, zone, current_figure):
     center = current_figure['layout']['mapbox']['center']
 
     pickup_counts = compute_geomap_data(days, hours)
-    fig = create_figure_geomap(pickup_counts, zone, zoom=zoom, center=center)
+    # fig = create_figure_geomap(pickup_counts, zone, zoom=zoom, center=center)
 
     # we piggy back on the calculated pickup_counts to calculate what are the # filtered rows
     # instead of doing another calculation / pass over the data
@@ -970,13 +1011,14 @@ def update_geomap_figure(days, hours, zone, current_figure):
     zone_pickup_count = pickup_counts[zone]
     zone_summary_md = zone_summary_template_md.format(zone_index_to_name[zone], zone_pickup_count, len(df_original))
 
-    return fig, markdown_text, zone_summary_md, str(count), "trigger loader"
+    # return fig, markdown_text, zone_summary_md, str(count), "trigger loader"
+    return markdown_text, zone_summary_md, str(count), "trigger loader"
 
 
 # Flow section
 @app.callback(
     [Output('flow_sankey_figure', 'figure'),
-     Output('flow_sunburst_figure', 'figure'),
+    #  Output('flow_sunburst_figure', 'figure'),
      Output('table', 'data'),
      Output('table', 'style_data_conditional'),
      Output('loader-trigger-1', 'children')
@@ -986,20 +1028,37 @@ def update_geomap_figure(days, hours, zone, current_figure):
      Input('zone', 'data'),
      ], prevent_initial_call=True
 )
-def update_flow_figures(days, hours, zone):
+def update_flow_figures(days, hours, zone, Xaxis, Yaxis):
     logger.info('Figure: update sankey and sunburst for days=%r hours=%r zone=%r', days, hours, zone)
-    flow_data = compute_flow_data(days, hours, zone)
+    flow_data = compute_flow_data(days, hours, zone_initial)
+    # flow_data = ([], [0, 23], zone_initial)
     df_outflow_top = vaex.from_dict(flow_data['outflow_top'])
     df_outflow_rest = vaex.from_dict(flow_data['outflow_rest'])
     df_outflow_borough = vaex.from_dict(flow_data['outflow_borough'])
 
     pickup_zone = zone
+    print(f"{Xaxis},{Yaxis}")
+    logger.info('Figure: update histogram and percent for Xaxis=%r Yaxis=%r', Xaxis, Yaxis)
     fig_sankey = create_figure_sankey(df_outflow_top, df_outflow_rest, df_outflow_borough, pickup_zone)
-    fig_sunburst = create_figure_sunburst(df_outflow_top, df_outflow_rest, df_outflow_borough, pickup_zone)
+    # fig_sunburst = create_figure_sunburst(df_outflow_top, df_outflow_rest, df_outflow_borough, pickup_zone, original_df, Xaxis)
     table_records, table_style = create_table_data(df_outflow_top)
 
-    return fig_sankey, fig_sunburst, table_records, table_style, 'trigger loader'
+    # return fig_sankey, fig_sunburst, table_records, table_style, 'trigger loader'
+    return fig_sankey, table_records, table_style, 'trigger loader'
 
+@app.callback([Output('geomap_figure', 'figure'),
+               Output('flow_sunburst_figure', 'figure')
+    ],
+    [Input('Xaxis', 'value'),
+     Input('Yaxis', 'value'),
+     ], prevent_initial_call=True
+)
+def update_flow_figures(Xaxis, Yaxis):
+    logger.info('Figure: update histogram and percent for Xaxis=%r Yaxis=%r', Xaxis, Yaxis)
+    fig_scatter = create_figure_geomap(geomap_data_initial, zone_initial, original_df, Xaxis, Yaxis)
+    fig_sunburst = create_figure_sunburst(df_outflow_top_initial, df_outflow_rest_initial, df_outflow_borough_initial, zone_initial, original_df, Xaxis)
+    
+    return fig_scatter, fig_sunburst
 
 # Trip plotting
 
