@@ -447,7 +447,7 @@ def create_figure_sunburst(df_outflow_top, df_outflow_rest, df_outflow_borough, 
     percent_dict = { "x" : percent_x, "percent" : percent}
     df_percent = DataFrame(percent_dict)
     fig_hist.add_traces(list(px.line(df_percent,x='x', y='percent').update_traces(mode='lines+markers', line={"dash": "dash", "color":"firebrick"}, yaxis="y3", name="percent").select_traces())).update_layout(yaxis3={"overlaying": "y", "side": "right"}, showlegend=False)
-    
+    fig_hist.update_layout(barmode='group', bargap=0.10,bargroupgap=0.0)
     # logger.info(f"Figure: heights {heights}")
     # logger.info(f"Figure: bins {bins}")
     # logger.info(f"Figure: h_xbins {h_xbins}")
