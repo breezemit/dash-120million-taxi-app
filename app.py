@@ -179,6 +179,18 @@ def data_bars(df, column):
     return styles
 
 #######################################
+# file/path function
+#######################################
+def find_folder(dir_path):
+    dir_list = list()
+    if os.path.exists(dir_path):
+        for file in os.listdir(dir_path):
+            file_path = os.path.join(dir_path, file) 
+            if os.path.isdir(file_path):
+                dir_list.append(file)
+    return dir_list
+            
+#######################################
 # Figure/plotly function
 #######################################
 
@@ -651,7 +663,7 @@ app.layout = html.Div(className='app-body', children=[
     html.Div(className="row", id='control-panel1', children=[
         html.Div(className="four columns pretty_container", children=[
             html.Label('Select Product Line Name'),
-            dcc.Dropdown(id='Product Name',
+            dcc.Dropdown(id='ProductName',
                          placeholder='Select product line',
                          options=[{'label': 'GloryEX', 'value': "GloryEX"},
                                   {'label': 'GloryBolt', 'value': 'GloryBolt'},
@@ -676,13 +688,6 @@ app.layout = html.Div(className='app-body', children=[
             html.Label('Select build number'),
             dcc.Dropdown(id='Number',
                          placeholder='Select a column of data for Y-axis',
-                         options=[{'label': '1', 'value': 1},
-                                  {'label': '101', 'value': 101},
-                                  {'label': '102', 'value': 102},
-                                  {'label': '103', 'value': 103},
-                                  {'label': '104', 'value': 104},
-                                  {'label': '105', 'value': 105},
-                                  {'label': '6', 'value': 6}],
                          value=[],
                         #  multi=True
                          ),
@@ -692,13 +697,8 @@ app.layout = html.Div(className='app-body', children=[
     html.Div(className="row", id='control-panel2', children=[
         html.Div(className="one-four columns pretty_container", children=[
             html.Label('Select Flow Name'),
-            dcc.Dropdown(id='Flow Name',
+            dcc.Dropdown(id='FlowName',
                          placeholder='Select product line',
-                         options=[{'label': 'dynamicVetor', 'value': "dynamicVetor"},
-                                  {'label': 'staticVetor', 'value': 'staticVetor'},
-                                  {'label': 'gridCheck', 'value': 'gridCheck'},
-                                  {'label': 'pgEM', 'value': 'pgEM'},
-                                  {'label': 'signalEM', 'value': 'signalEM'},],
                          value=[],
                         #  multi=True 用于开启混合选项
                          ),
@@ -707,28 +707,22 @@ app.layout = html.Div(className='app-body', children=[
             html.Label('Select Process'),
             dcc.Dropdown(id='Process',
                          placeholder='Select Process',
-                         options=[{'label': 'TSMC28', 'value': 'TSMC28'},
-                                  {'label': 'SMIC12', 'value': 'SMIC12'},],
                          value=[],
                         #  multi=True
                          ),
         ]),
         html.Div(className="one-four columns pretty_container", children=[
             html.Label('Select Case Name'),
-            dcc.Dropdown(id='Case Name',
+            dcc.Dropdown(id='CaseName',
                          placeholder='Select Case Name',
-                         options=[{'label': 'viaModel', 'value': 'viaModel'},
-                                  {'label': 'polygon_R', 'value': 'polygon_R'},],
                          value=[],
                         #  multi=True
                          ),
         ]),
         html.Div(className="one-four columns pretty_container", children=[
             html.Label('Select Result Name'),
-            dcc.Dropdown(id='Result Name',
+            dcc.Dropdown(id='ResultName',
                          placeholder='Select Result Name',
-                         options=[{'label': 'vdd', 'value': 'vdd'},
-                                  {'label': 'error', 'value': 'error'},],
                          value=[],
                         #  multi=True
                          ),
@@ -1051,7 +1045,8 @@ def update_flow_figures(days, hours, zone, Xaxis, Yaxis):
     ],
     [Input('Xaxis', 'value'),
      Input('Yaxis', 'value'),
-     ], prevent_initial_call=True
+     ],
+    prevent_initial_call=True
 )
 def update_flow_figures(Xaxis, Yaxis):
     logger.info('Figure: update histogram and percent for Xaxis=%r Yaxis=%r', Xaxis, Yaxis)
@@ -1059,6 +1054,86 @@ def update_flow_figures(Xaxis, Yaxis):
     fig_sunburst = create_figure_sunburst(df_outflow_top_initial, df_outflow_rest_initial, df_outflow_borough_initial, zone_initial, original_df, Xaxis)
     
     return fig_scatter, fig_sunburst
+
+@app.callback(Output('Number', 'options'),
+    [Input('ProductName', 'value'),
+     Input('Type', 'value'),
+     ],
+    prevent_initial_call=True
+)
+def update_build_number(select_product, select_type):
+    logger.info('Data: update ProductName=%r BuildType=%r', select_product, select_type)
+    build_path = os.path.join("/opt/lixile/TestHub", select_product, select_type )
+    build_list = find_folder(build_path)
+    return [{'label': str(i), 'value': str(i)} for i in build_list]
+
+@app.callback(Output('FlowName', 'options'),
+    [Input('Number', 'value'),
+     ],
+    [State('ProductName', 'value'),
+     State('Type', 'value'),
+     ],
+    prevent_initial_call=True
+)
+def update_flow_name(select_build_num, select_product, select_type, ):
+    logger.info('Data: update ProductName=%r BuildType=%r BuildNum=%r', select_product, select_type, select_build_num)
+    flow_path = os.path.join("/opt/lixile/TestHub", select_product, select_type, select_build_num)
+    flow_list = find_folder(flow_path)
+    return [{'label': str(i), 'value': str(i)} for i in flow_list]
+
+@app.callback(Output('Process', 'options'),
+    [Input('FlowName', 'value'),
+     ],
+    [State('ProductName', 'value'),
+     State('Type', 'value'),
+     State('Number', 'value'),
+     ],
+    prevent_initial_call=True
+)
+def update_flow_name(select_flow_name, select_product, select_type, select_build_num,):
+    logger.info('Data: update ProductName=%r BuildType=%r BuildNum=%r FlowName=%r', select_product, select_type, select_build_num, select_flow_name)
+    process_path = os.path.join("/opt/lixile/TestHub", select_product, select_type, select_build_num, select_flow_name)
+    process_list = find_folder(process_path)
+    return [{'label': str(i), 'value': str(i)} for i in process_list]
+
+@app.callback(Output('CaseName', 'options'),
+    [Input('Process', 'value'),
+     ],
+    [State('ProductName', 'value'),
+     State('Type', 'value'),
+     State('Number', 'value'),
+     State('FlowName', 'value'),
+     ],
+    prevent_initial_call=True
+)
+def update_flow_name( select_process, select_product, select_type, select_build_num, select_flow_name,):
+    logger.info('Data: update ProductName=%r BuildType=%r BuildNum=%r FlowName=%r Process=%r', select_product, select_type, select_build_num, select_flow_name, select_process)
+    process_path = os.path.join("/opt/lixile/TestHub", select_product, select_type, select_build_num, select_flow_name, select_process)
+    process_list = find_folder(process_path)
+    return [{'label': str(i), 'value': str(i)} for i in process_list]
+
+@app.callback(Output('ResultName', 'options'),
+    [Input('CaseName', 'value'),
+     ],
+    [State('ProductName', 'value'),
+     State('Type', 'value'),
+     State('Number', 'value'),
+     State('FlowName', 'value'),
+     State('Process', 'value'),
+     ],
+    prevent_initial_call=True
+)
+def update_flow_name( select_case, select_product, select_type, select_build_num, select_flow_name, select_process):
+    logger.info('Data: update ProductName=%r BuildType=%r BuildNum=%r FlowName=%r Process=%r CaseName=%r', select_product, select_type, select_build_num, select_flow_name, select_process, select_case)
+    result_path = os.path.join("/opt/lixile/TestHub", select_product, select_type, select_build_num, select_flow_name, select_process, select_case)
+    result_list = list()
+    if os.path.exists(result_path):
+        for file in os.listdir(result_path):
+            file_path = os.path.join(result_path, file) 
+            if os.path.isfile(file_path) and "hdf" in file:
+                result_list.append(file)
+    return [{'label': str(i).split(".")[0], 'value': str(i)} for i in result_list]
+
 
 # Trip plotting
 
