@@ -520,13 +520,14 @@ def update_flow_name( select_result, select_product, select_type, select_build_n
             if result_df_dict[k]["df"].count() <= 50000:
                 df_scatter = html.Div(className="six columns pretty_container", children=[
                         dcc.Graph(id=k + 'scatter_figure',
-                                  figure=create_figure_scatter(figures_summary_md, result_df_dict[k]["df"].to_pandas_df(), result_df_dict[k]["x"], result_df_dict[k]["y"] ),
+                                  figure=create_figure_scatter(figures_summary_md + "-" + k, result_df_dict[k]["df"].to_pandas_df(), result_df_dict[k]["x"], result_df_dict[k]["y"] ),
                                   config={"modeBarButtonsToRemove": ['lasso2d', 'select2d']})])
             else:
                 image_dir = os.path.dirname(os.path.abspath(df_file_path))
                 image_path = os.path.join(image_dir, figures_summary_md+ "-" + k +"-scatter.png")
                 if not os.path.isfile(image_path):
                     fig = plt.figure(figsize=(8, 4))
+                    fig.suptitle(figures_summary_md + "-" + k)
                     df_file.viz.scatter(result_df_dict[k]["x"], result_df_dict[k]["y"], length_check=False, s=1)
                     # fig.savefig(image_path, dpi=200, bbox_inches=0)
                     fig.savefig(image_path, bbox_inches=0)
@@ -547,5 +548,5 @@ def update_flow_name( select_result, select_product, select_type, select_build_n
 
 
 if __name__ == '__main__':
-    # app.run_server(host="0.0.0.0", debug=True)
-    app.run_server(host="0.0.0.0",)
+    app.run_server(host="0.0.0.0", debug=True)
+    # app.run_server(host="0.0.0.0",)
